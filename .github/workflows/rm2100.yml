@@ -1,0 +1,119 @@
+name: Build Padavan RM2100
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/hanwckf/rt-n56u
+  REPO_BRANCH: master
+  UPLOAD_WETRANSFER: false
+  UPLOAD_RELEASE: true
+  Build_Targets: RM2100
+  CONFIG_FILE: RM2100.config
+  DIY_SH: diy.sh
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Prepare environment
+      run: |
+       sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+       sudo -E apt-get -qq update
+       sudo -E apt-get -qq install libtool-bin gperf python3-docutils autopoint gettext zip
+       sudo -E apt-get -qq autoremove --purge
+       sudo -E apt-get -qq clean
+       sudo timedatectl set-timezone "Asia/Shanghai"
+
+    - name: Clone source
+      if: (!cancelled())
+      run: |
+       df -hT $PWD
+       git clone --depth=1 $REPO_URL -b $REPO_BRANCH /opt/rt-n56u
+
+    - name: Load custom configuration
+      run: |
+        mv -f $CONFIG_FILE /opt/rt-n56u/trunk/configs/templates/$Build_Targets.config
+        chmod +x $DIY_SH
+        cd /opt/rt-n56u
+        $GITHUB_WORKSPACE/$DIY_SH
+
+    - name: Download toolchain
+      if: (!cancelled())
+      run: |
+       cd /opt/rt-n56u/toolchain-mipsel
+       sh dl_toolchain.sh
+
+    - name: Compile the firmware
+      if: (!cancelled())
+      id: compile
+      run: |
+        cd /opt/rt-n56u/trunk
+        fakeroot ./build_firmware_modify $Build_Targets
+        echo "::set-output name=status::success"
+        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        name: Padavan_firmware_${{ env.Build_Targets }}_${{ env.FILE_DATE }}
+        path: /opt/rt-n56u/trunk/images
+
+    - name: Upload firmware to WeTransfer
+      id: wetransfer
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      run: |
+       curl -fsSL git.io/file-transfer | sh
+       ./transfer wet -s -p 16 --no-progress /opt/rt-n56u/trunk/images 2>&1 | tee wetransfer.log
+       echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
+       echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+
+    - name: Generate release tag
+      id: tag
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+       echo "::set-output name=release_tag::$(date +"%Y.%m.%d-%H%M")"
+       touch release.txt
+       echo "## Padavan Release $(date +"%Y.%m.%d-%H:%M")" >> release.txt
+       echo "- Source code:" >> release.txt
+       echo "  ${{ env.REPO_URL }}/tree/${{ env.REPO_BRANCH }}" >> release.txt
+       echo "- ${{ env.Build_Targets }}.trx" >> release.txt
+       echo "  md5sum: $(md5sum /opt/rt-n56u/trunk/images/*.trx | cut -d" " -f1)" >> release.txt
+       echo "  sha256: $(sha256sum /opt/rt-n56u/trunk/images/*.trx | cut -d" " -f1)" >> release.txt
+       [ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer](${{ steps.wetransfer.outputs.url }})" >> release.txt
+       echo "::set-output name=status::success"
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+       GITHUB_TOKEN: ${{ secrets.ACTIONS_REPO_PAT }}
+      with:
+       tag_name: ${{ steps.tag.outputs.release_tag }}
+       body_path: release.txt
+       files: |
+        /opt/rt-n56u/trunk/images/*.trx
+        /opt/rt-n56u/trunk/configs/templates/${{ env.Build_Targets }}.config
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      with:
+       token: ${{ secrets.ACTIONS_REPO_PAT }}
+       repository: ${{ github.repository }}
+       retain_days: 1
+       keep_minimum_runs: 3
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.1.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+       keep_latest: 3
+       delete_tags: true
+      env:
+       GITHUB_TOKEN: ${{ secrets.ACTIONS_REPO_PAT }}
