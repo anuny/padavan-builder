@@ -1,12 +1,8 @@
 # Github Actions Padavan RM2100
 
 - Padavan源码是[hanwckf/rt-n56u](https://github.com/hanwckf/rt-n56u)。
-- Github Actions参考自[P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)&[hanwckf/scut_padavan_build](https://github.com/hanwckf/scut_padavan_build)。
 - 编译目标为Redmi-AC2100
 - 默认登陆地址[10.0.0.1](10.0.0.1),登录名admin/admin
-
-### Actions secrets配置
-- 有关`secrets.ACTIONS_REPO_PAT`请参阅[源码更新自动编译内容](https://p3terx.com/archives/build-openwrt-with-github-actions.html#toc_13)
 
 ### 防火墙ipv6配置参考
 - 关闭ipv6防火墙
